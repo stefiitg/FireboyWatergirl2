@@ -1,3 +1,4 @@
+// (păstrat includes și using-urile tale)
 #include <SFML/Graphics.hpp>
 #include <iostream>
 #include <vector>
@@ -10,7 +11,6 @@ using std::string;
 using std::vector;
 using std::cout;
 using std::endl;
-
 
 enum class TileType { Empty, Solid, Fire, Water, ExitFire, ExitWater };
 
@@ -53,7 +53,6 @@ public:
         initShape();
     }
 
-
     Tile(const Tile& other) = default;
     Tile& operator=(const Tile& other) = default;
     ~Tile() = default;
@@ -63,15 +62,9 @@ public:
     int getRow() const { return gy; }
     static float getSize() { return TILE_SIZE; }
 
-
     void draw(sf::RenderTarget& target) const {
         if (type != TileType::Empty) target.draw(rect);
-        else {
-
-
-        }
     }
-
 
     sf::FloatRect bounds() const {
         return rect.getGlobalBounds();
@@ -91,6 +84,7 @@ private:
     sf::Sprite sprite;
     sf::RectangleShape fallbackShape;
     bool usingTexture;
+    string texturePath;            // --- nou: păstrăm calea pentru a reîncărca la copy
     sf::Vector2f position;
     sf::Vector2f velocity;
     int lives;
@@ -106,39 +100,52 @@ private:
         fallbackShape.setPosition(position);
     }
 
-public:
-
-
-    Character(const string& nm, const string& texturePath,
-              const sf::Vector2f& pos = {0.f,0.f}, int lifeCount = 3,
-              const sf::Color& fallbackColor = sf::Color::White)
-        : name(nm), position(pos), velocity(0.f, 0.f), lives(lifeCount), onGround(false), usingTexture(false)
-    {
-        // daca nu gaseste texture ia dreptunghiuri
-        if (!texturePath.empty() && texture.loadFromFile(texturePath)) {
-            usingTexture = true;
-            sprite.setTexture(texture);
-            // scale sprite to tile size
-            float factor = Tile::getSize() / texture.getSize().y;
-            sprite.setScale(factor, factor);
-            sprite.setPosition(position);
+    void tryLoadTexture() {
+        if (!texturePath.empty()) {
+            // încercăm să încărcăm textura — dacă eșuează, rămânem cu fallback
+            if (texture.loadFromFile(texturePath)) {
+                usingTexture = true;
+                sprite.setTexture(texture);
+                float factor = Tile::getSize() / static_cast<float>(texture.getSize().y);
+                if (texture.getSize().y > 0) sprite.setScale(factor, factor);
+                sprite.setPosition(position);
+            } else {
+                usingTexture = false;
+                initFallbackShape(sf::Color::White, {Tile::getSize(), Tile::getSize()});
+            }
         } else {
             usingTexture = false;
-            initFallbackShape(fallbackColor, {Tile::getSize(), Tile::getSize()});
+            initFallbackShape(sf::Color::White, {Tile::getSize(), Tile::getSize()});
         }
     }
 
+public:
+
+    Character(const string& nm, const string& texPath,
+              const sf::Vector2f& pos = {0.f,0.f}, int lifeCount = 3,
+              const sf::Color& fallbackColor = sf::Color::White)
+        : name(nm), usingTexture(false), texturePath(texPath),
+          position(pos), velocity(0.f, 0.f), lives(lifeCount), onGround(false)
+    {
+        tryLoadTexture();
+        if (!usingTexture) {
+            // aplicăm culoarea fallback cerută
+            initFallbackShape(fallbackColor, {Tile::getSize(), Tile::getSize()});
+            fallbackShape.setPosition(position);
+        } else {
+            sprite.setPosition(position);
+        }
+    }
 
     void setOnGround(bool state) {
          onGround=state;
     }
 
+    // copy ctor: reîncarcă textura din path (dacă există) în loc să copieze internals
     Character (const Character& other)
         : name(other.name),
-          texture(other.texture),
-          sprite(other.sprite),
-          fallbackShape(other.fallbackShape),
-          usingTexture(other.usingTexture),
+          texturePath(other.texturePath),
+          usingTexture(false),
           position(other.position),
           velocity(other.velocity),
           lives(other.lives),
@@ -146,55 +153,58 @@ public:
           speed(other.speed),
           jumpImpulse(other.jumpImpulse)
     {
-        if (usingTexture) sprite.setTexture(texture);
+        tryLoadTexture();
+        if (!usingTexture) {
+            fallbackShape = other.fallbackShape;
+            fallbackShape.setPosition(position);
+        } else {
+            sprite.setPosition(position);
+        }
     }
 
     Character& operator=(const Character& other) {
         if (this == &other) return *this;
         name = other.name;
-        texture = other.texture;
-        sprite = other.sprite;
-        fallbackShape = other.fallbackShape;
-        usingTexture = other.usingTexture;
+        texturePath = other.texturePath;
         position = other.position;
         velocity = other.velocity;
         lives = other.lives;
         onGround = other.onGround;
         speed = other.speed;
         jumpImpulse = other.jumpImpulse;
-        if (usingTexture) sprite.setTexture(texture);
+
+        tryLoadTexture();
+        if (!usingTexture) {
+            fallbackShape = other.fallbackShape;
+            fallbackShape.setPosition(position);
+        } else {
+            sprite.setPosition(position);
+        }
         return *this;
     }
 
     ~Character() = default;
 
-
     const string& getName() const { return name; }
     int getLives() const { return lives; }
     sf::Vector2f getPosition() const { return position; }
-
 
     sf::FloatRect bounds() const {
         if (usingTexture) return sprite.getGlobalBounds();
         return fallbackShape.getGlobalBounds();
     }
 
-
-    void setPosition(const sf::Vector2f& p) { //pozitie si cu respawn
+    void setPosition(const sf::Vector2f& p) {
         position = p;
         if (usingTexture) sprite.setPosition(position);
         else fallbackShape.setPosition(position);
     }
 
-    // GENERAT DE AI:  A public complex function: update physics, apply gravity, integrate velocity
-    // returns true if something significant changed (for debugging)
     bool update(float dt, const sf::FloatRect& worldBounds) {
 
         velocity.y += GRAVITY * dt;
-
         position += velocity * dt;
 
-        // simple floor collision with world bounds bottom
         if (position.y + Tile::getSize() > worldBounds.top + worldBounds.height) {
             position.y = worldBounds.top + worldBounds.height - Tile::getSize();
             velocity.y = 0.f;
@@ -203,22 +213,18 @@ public:
             onGround = false;
         }
 
-        // prevent leaving world horizontally
         if (position.x < worldBounds.left) position.x = worldBounds.left;
         if (position.x + Tile::getSize() > worldBounds.left + worldBounds.width)
             position.x = worldBounds.left + worldBounds.width - Tile::getSize();
 
-        // update visual
         if (usingTexture) sprite.setPosition(position);
         else fallbackShape.setPosition(position);
 
         return true;
     }
-// GENERAT AI  ^
 
     void moveLeft(float dt) { position.x -= speed * dt; if (usingTexture) sprite.setPosition(position); else fallbackShape.setPosition(position); }
     void moveRight(float dt) { position.x += speed * dt; if (usingTexture) sprite.setPosition(position); else fallbackShape.setPosition(position); }
-
 
     void jump() {
         if (onGround) {
@@ -227,14 +233,12 @@ public:
         }
     }
 
-
     void takeDamageAndRespawn(const sf::Vector2f& respawnPos) {
         if (lives > 0) --lives;
         setPosition(respawnPos);
         velocity = {0.f, 0.f};
         onGround = false;
     }
-
 
     void draw(sf::RenderTarget& target) const {
         if (usingTexture) target.draw(sprite);
@@ -246,7 +250,6 @@ public:
         return os;
     }
 
-
     void setFallbackAppearance(const sf::Color& c) {
         fallbackShape.setFillColor(c);
         fallbackShape.setSize({Tile::getSize(), Tile::getSize()});
@@ -254,19 +257,23 @@ public:
     }
 };
 
-//test push gg
+
 class Map {
 private:
     vector<vector<Tile>> grid;
     int width, height;
 
-    // helper to create grid
+    // helper to create grid - construit in-place fiecare Tile ca sa evitam copieri temporare
     void allocateGrid(int w, int h, TileType defaultType = TileType::Empty) {
         width = w; height = h;
-        grid.assign(height, vector<Tile>(width, Tile(defaultType, 0, 0)));
-        for (int r = 0; r < height; ++r)
-            for (int c = 0; c < width; ++c)
-                grid[r][c] = Tile(defaultType, c, r);
+        grid.clear();
+        grid.resize(height);
+        for (int r = 0; r < height; ++r) {
+            grid[r].reserve(width);
+            for (int c = 0; c < width; ++c) {
+                grid[r].emplace_back(defaultType, c, r);
+            }
+        }
     }
 
 public:
@@ -274,7 +281,6 @@ public:
     Map(int w = 12, int h = 8, TileType defaultType = TileType::Empty) {
         allocateGrid(w,h,defaultType);
     }
-
 
     Map(const Map& other) {
         width = other.width;
@@ -287,7 +293,6 @@ public:
             grid.push_back(std::move(row));
         }
     }
-
 
     Map& operator=(const Map& other) {
         if (this == &other) return *this;
@@ -304,18 +309,12 @@ public:
         return *this;
     }
 
-
-    ~Map() {
-
-    }
+    ~Map() {}
 
     int getWidth() const { return width; }
     int getHeight() const { return height; }
 
-    // complex public function: generate ascending platforms randomly
-    // "ascending" -> platforms generally going upward from left to right - asta am lasat-o asa, sunt tiles generate "semi-random" adica cu seed la nr 12345, daca nu fac asa imi da erori , o sa mai remediez
     void generateAscendingPlatforms(unsigned seed = 0) {
-        // clear first
         for (int r=0;r<height;++r)
             for (int c=0;c<width;++c)
                 grid[r][c] = Tile(TileType::Empty, c, r);
@@ -338,58 +337,23 @@ public:
             if (currentRow > 1) currentRow -= 1;
         }
 
-
         grid[height-2][2] = Tile(TileType::Fire, 2, height-2);
         grid[height-3][width-3] = Tile(TileType::Water, width-3, height-3);
-
 
         grid[1][width-2] = Tile(TileType::ExitFire, width-2, 1);
         grid[1][1] = Tile(TileType::ExitWater, 1, 1);
     }
-    /*void generateCustomPlatforms() { //codu cu tiles manuale
-
-        for (int r = 0; r < height; ++r)
-            for (int c = 0; c < width; ++c)
-                grid[r][c] = Tile(TileType::Empty, c, r);
-
-
-
-        for (int c = 0; c < width; ++c) {
-            grid[height-1][c] = Tile(TileType::Solid, c, height-1);
-        }
-
-
-        grid[6][3] = Tile(TileType::Solid, 3, 6);
-        grid[6][4] = Tile(TileType::Solid, 4, 6);
-        grid[6][5] = Tile(TileType::Solid, 5, 6);
-
-        grid[4][7] = Tile(TileType::Solid, 7, 4);
-        grid[4][8] = Tile(TileType::Solid, 8, 4);
-        grid[4][9] = Tile(TileType::Solid, 9, 4);
-
-        grid[2][5] = Tile(TileType::Solid, 5, 2);
-        grid[2][6] = Tile(TileType::Solid, 6, 2);
-
-
-        grid[height-2][2] = Tile(TileType::Fire, 2, height-2);
-        grid[height-3][width-3] = Tile(TileType::Water, width-3, height-3);
-        grid[1][width-2] = Tile(TileType::ExitFire, width-2, 1);
-        grid[1][1] = Tile(TileType::ExitWater, 1, 1);
-    }*/
-
 
     TileType getTileTypeAtGrid(int col, int row) const {
         if (col < 0 || col >= width || row < 0 || row >= height) return TileType::Solid;
         return grid[row][col].getType();
     }
 
-
     TileType getTileTypeAtWorld(float x, float y) const {
         int col = static_cast<int>(x / Tile::getSize());
         int row = static_cast<int>(y / Tile::getSize());
         return getTileTypeAtGrid(col, row);
     }
-
 
     void draw(sf::RenderTarget& target) const {
         for (int r = 0; r < height; ++r)
@@ -408,14 +372,11 @@ public:
         return os;
     }
 
-
     sf::FloatRect worldBounds() const {
         return sf::FloatRect(0.f, 0.f, width * Tile::getSize(), height * Tile::getSize());
     }
 
-
     sf::Vector2f respawnWorldPosForFire() const {
-
         return sf::Vector2f(Tile::getSize() * 1.f, Tile::getSize() * (height - 2));
     }
     sf::Vector2f respawnWorldPosForWater() const {
@@ -438,6 +399,7 @@ private:
     bool watergirlAtExit = false;
     bool won = false;
     sf::Font font;
+    bool fontLoaded = false; // --- nou
     sf::Text winText;
 
 
@@ -447,7 +409,6 @@ private:
             if (sf::Keyboard::isKeyPressed(sf::Keyboard::A)) fireboy.moveLeft(dt);
             if (sf::Keyboard::isKeyPressed(sf::Keyboard::D)) fireboy.moveRight(dt);
             if (sf::Keyboard::isKeyPressed(sf::Keyboard::W)) fireboy.jump();
-
 
             if (sf::Keyboard::isKeyPressed(sf::Keyboard::F)) watergirl.moveLeft(dt);
             if (sf::Keyboard::isKeyPressed(sf::Keyboard::H)) watergirl.moveRight(dt);
@@ -464,14 +425,11 @@ private:
         int topRow = static_cast<int>(cb.top / Tile::getSize());
         int bottomRow = static_cast<int>((cb.top + cb.height) / Tile::getSize());
 
-
         leftCol = std::max(leftCol, 0);
         rightCol = std::min(rightCol, map.getWidth()-1);
         topRow = std::max(topRow, 0);
         bottomRow = std::min(bottomRow, map.getHeight()-1);
 
-
-        bool onSolid = false;
         for (int r = topRow; r <= bottomRow; ++r) {
             for (int c = leftCol; c <= rightCol; ++c) {
                 TileType tt = map.getTileTypeAtGrid(c, r);
@@ -484,18 +442,14 @@ private:
                         float tileCenterY = tileRect.top + tileRect.height * 0.5f;
                         ch.setOnGround(true);
                         if (charCenterY < tileCenterY) {
-
                             ch.setPosition({cb.left, tileRect.top - cb.height});
                         } else {
-
                             ch.setPosition({cb.left, tileRect.top + tileRect.height});
                         }
-                        onSolid = true;
                     }
                 }
 
                 if (tt == TileType::Fire) {
-
                     if (ch.getName() == "Watergirl") {
                         ch.takeDamageAndRespawn(respawnPos);
                         reachedExitForCharacter = false;
@@ -508,7 +462,6 @@ private:
                         return;
                     }
                 } else if (tt == TileType::ExitFire && ch.getName() == "Fireboy") {
-                    // check overlap => at exit
                     sf::FloatRect tileRect(c * Tile::getSize(), r * Tile::getSize(), Tile::getSize(), Tile::getSize());
                     if (intersects(cb, tileRect)) {
                         reachedExitForCharacter = true;
@@ -533,18 +486,17 @@ private:
         fireboy.update(dt, world);
         watergirl.update(dt, world);
 
-
         handleCollisions(fireboy, map.respawnWorldPosForFire(), fireboyAtExit, TileType::ExitFire);
         handleCollisions(watergirl, map.respawnWorldPosForWater(), watergirlAtExit, TileType::ExitWater);
 
-
         if (fireboyAtExit && watergirlAtExit) {
             won = true;
-            winText.setString("WIN");
-
-            sf::FloatRect tb = winText.getLocalBounds();
-            winText.setOrigin(tb.left + tb.width/2.f, tb.top + tb.height/2.f);
-            winText.setPosition(window.getSize().x/2.f, window.getSize().y/2.f - 20.f);
+            if (fontLoaded) {
+                winText.setString("WIN");
+                sf::FloatRect tb = winText.getLocalBounds();
+                winText.setOrigin(tb.left + tb.width/2.f, tb.top + tb.height/2.f);
+                winText.setPosition(window.getSize().x/2.f, window.getSize().y/2.f - 20.f);
+            }
         }
     }
 
@@ -553,7 +505,7 @@ private:
         map.draw(window);
         fireboy.draw(window);
         watergirl.draw(window);
-        if (won) window.draw(winText);
+        if (won && fontLoaded) window.draw(winText);
         window.display();
     }
 
@@ -569,19 +521,19 @@ public:
         map.generateAscendingPlatforms(/*seed*/ 12345);
 
         if (!font.loadFromFile("Desktop/arial.ttf")) {
-
-            cout << "Warning: font 'Desktop/arial.ttf' not found. Win text may not display correctly.\n";
+            cout << "Warning: font 'Desktop/arial.ttf' not found. Win text will not be displayed.\n";
+            fontLoaded = false;
+        } else {
+            fontLoaded = true;
+            winText.setFont(font);
+            winText.setCharacterSize(48);
+            winText.setFillColor(sf::Color::Yellow);
+            winText.setStyle(sf::Text::Bold);
         }
-        winText.setFont(font);
-        winText.setCharacterSize(48);
-        winText.setFillColor(sf::Color::Yellow);
-        winText.setStyle(sf::Text::Bold);
-//test git
 
         fireboy.setFallbackAppearance(sf::Color::Red);
         watergirl.setFallbackAppearance(sf::Color::Blue);
     }
-
 
     friend std::ostream& operator<<(std::ostream& os, const Game& g) {
         os << "Game state:\n";
@@ -591,7 +543,6 @@ public:
         os << "Won: " << (g.won ? "true" : "false") << "\n";
         return os;
     }
-
 
     void run() {
         sf::Clock clock;
@@ -611,13 +562,8 @@ public:
 
 
 int main() {
-
     Game game(14, 9);
-
     cout << game << endl;
-
     game.run();
-
     return 0;
 }
-
